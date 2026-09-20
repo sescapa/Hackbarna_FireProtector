@@ -1,10 +1,17 @@
 .venv/
+**/.venv/
 .env
 __pycache__/
 *.py[cod]
 .pytest_cache/
 db/
+!db/init/
+data/
+!data/municipality_slug_map.csv
 scripts/
+!scripts/__init__.py
+!scripts/fire_spread/
+!scripts/load_register.py
 tests/
 docker-compose.yml
 Dockerfile

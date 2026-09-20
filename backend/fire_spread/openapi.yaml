@@ -2,13 +2,23 @@ openapi: 3.1.0
 info:
   title: Fire Spread API
   description: >
-    Simulates a point-ignition wildfire via Deepfire and returns a grid of
-    first-arrival hours (hour each cell is first reached by the fire).
+    Self-hosted ELMFIRE fire-spread service for Catalonia. Given an initial fire
+    state - a point ignition (GET) or a point and/or an active perimeter (POST) -
+    runs a Monte Carlo ensemble of ELMFIRE simulations on open Catalan data (50 m
+    cells, 40x40 km domain placed downwind of the reference point) and the live
+    Open-Meteo forecast, and returns a lat/lon grid with minute-level arrival times
+    and per-cell uncertainty (burn probability, P10/P90 arrival).
 
-    Mounted at /fire inside the FireProtector API, whose global exception
-    handlers put every error in the shared envelope below; this file describes
-    the route as it behaves there.
-  version: "1.0.0"
+    Two pipeline modes share every input and differ only in model knobs: "base" is
+    stock ELMFIRE physics, "tuned" our Mediterranean/Catalan adjustments (fuel
+    table, night damping, wind gustiness, live-moisture climatology). The server
+    default is PIPELINE_MODE; each request may override it with "mode".
+
+    Mounted at /fire inside the FireProtector API (backend/app), whose global
+    error handlers apply: every error body is {"error": {"code", "message"}}
+    rather than {"detail"} and 422 is reported as 400 (see backend/README.md,
+    "Errors"). The status codes below are what the router itself raises.
+  version: "2.1.0"
 
 servers:
   - url: /fire
@@ -19,98 +29,304 @@ tags:
 paths:
   /arrival-grid:
     get:
-      tags:
-        - fire-spread
-      summary: Simulate a point ignition and return the arrival-hour grid
+      tags: [fire-spread]
+      summary: Simulate a point ignition and return the arrival grid
       description: >
-        Queues a 24-hour ELMFIRE point-ignition simulation at the given
-        coordinates, waits for it to complete, then rasterises the hourly
-        fire perimeters into a grid of first-arrival hours (100m cells).
+        Synchronous: the response is the prediction (typically 10-60 s). One request
+        = one ELMFIRE ensemble run. Concurrency is limited; a 503 means retry later.
+        The grid is cropped to the burned extent (plus a small margin) so its size
+        depends on how far the fire spreads.
+
+        By default the response is the original contract of this route
+        (LegacyArrivalGrid: originLat, originLon, cellDegLat, cellDegLon, arrivalHours
+        at 100 m cells), so existing consumers see no change. detail=true returns the
+        full ArrivalGrid (minute-level arrival, P10/P90, burn probability, weather,
+        physics); debug=true implies it.
       operationId: arrivalGrid
       parameters:
         - name: lat
           in: query
           required: true
-          description: Ignition point latitude.
-          schema:
-            type: number
-            format: double
-            minimum: -90
-            maximum: 90
+          description: Ignition latitude (WGS84).
+          schema: { type: number, format: double, minimum: -90, maximum: 90 }
         - name: lon
           in: query
           required: true
-          description: Ignition point longitude.
-          schema:
-            type: number
-            format: double
-            minimum: -180
-            maximum: 180
+          description: Ignition longitude (WGS84).
+          schema: { type: number, format: double, minimum: -180, maximum: 180 }
+        - name: durationHours
+          in: query
+          required: false
+          description: Simulation horizon in hours.
+          schema: { type: integer, minimum: 1, maximum: 48, default: 24 }
+        - name: ensembleMembers
+          in: query
+          required: false
+          description: >
+            Number of ELMFIRE cases. 1 = deterministic (burnProbability is 0/1 and
+            P10 = median = P90). Each case runs on its own NWP ensemble member (wind,
+            temperature, humidity, rain) plus small perturbations of 1-h fuel moisture
+            and the spread-rate adjustment; without an ensemble the deterministic wind
+            is perturbed with the ensemble spread instead.
+          schema: { type: integer, minimum: 1, maximum: 64, default: 16 }
+        - name: startTime
+          in: query
+          required: false
+          description: >
+            Ignition time (ISO 8601). Weather band 1 is the hour containing it and the
+            minute offset becomes the simulation start. Default now.
+          schema: { type: string, format: date-time }
+        - name: seed
+          in: query
+          required: false
+          description: ELMFIRE random seed. Default derived from lat/lon/startTime (reproducible).
+          schema: { type: integer, minimum: 1 }
+        - name: spotting
+          in: query
+          required: false
+          description: Enable ember transport (spot fires). Slower; default from server settings (off).
+          schema: { type: boolean }
+        - name: mode
+          in: query
+          required: false
+          description: Pipeline mode for this run; default the server's PIPELINE_MODE.
+          schema: { $ref: "#/components/schemas/PipelineMode" }
+        - name: cellSizeM
+          in: query
+          required: false
+          description: >
+            Cell size of the response grid in metres. The simulation always runs at the
+            static tier's native resolution (50 m); the output is resampled to this.
+          schema: { type: number, minimum: 30, maximum: 1000, default: 100 }
+        - name: detail
+          in: query
+          required: false
+          description: Return the full ArrivalGrid instead of the legacy five-key shape.
+          schema: { type: boolean, default: false }
+        - name: debug
+          in: query
+          required: false
+          description: Include run directory, timings and ELMFIRE stdout tail (implies detail).
+          schema: { type: boolean, default: false }
       responses:
         "200":
-          description: Arrival-hour grid computed successfully.
+          description: Arrival grid computed successfully.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ArrivalGrid"
-        "400":
-          description: >
-            Validation error (missing or out-of-range lat/lon). FastAPI's
-            native 422 is remapped to 400 application-wide.
+                oneOf:
+                  - $ref: "#/components/schemas/LegacyArrivalGrid"
+                  - $ref: "#/components/schemas/ArrivalGrid"
+        "422": { $ref: "#/components/responses/InvalidFireState" }
+        "500": { $ref: "#/components/responses/ElmfireFailed" }
+        "502": { $ref: "#/components/responses/WeatherFailed" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/ElmfireTimeout" }
+    post:
+      tags: [fire-spread]
+      summary: Simulate an initial fire state (point and/or active perimeter) and return the arrival grid
+      description: >
+        Same simulation as GET, from a JSON body. "perimeter" is the currently burning
+        area as a GeoJSON Polygon or MultiPolygon (WGS84 lon/lat): every cell inside it
+        is burning at t 0 (arrival 0, burnProbability 1) and ELMFIRE lights up to 100
+        points along its boundary (physics.perimeterIgnitions). The reference point -
+        domain placement, weather point, grid anchor - is "ignition" when given, else
+        the perimeter centroid. The perimeter must touch burnable fuel and fit the
+        40 km domain (about 10 km across).
+      operationId: arrivalGridFromState
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FireStateRequest" }
+            examples:
+              perimeter:
+                value:
+                  perimeter:
+                    type: Polygon
+                    coordinates: [[[1.820, 41.585], [1.835, 41.585], [1.838, 41.595], [1.825, 41.598], [1.820, 41.585]]]
+                  durationHours: 6
+                  ensembleMembers: 8
+              point:
+                value: { ignition: { lat: 41.59, lon: 1.83 }, mode: base }
+      responses:
+        "200": { $ref: "#/components/responses/ArrivalGridOK" }
+        "422": { $ref: "#/components/responses/InvalidFireState" }
+        "500": { $ref: "#/components/responses/ElmfireFailed" }
+        "502": { $ref: "#/components/responses/WeatherFailed" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/ElmfireTimeout" }
+
+  /health:
+    get:
+      tags: [fire-spread]
+      summary: Liveness + whether the ELMFIRE binary and static data are present
+      operationId: health
+      responses:
+        "200":
+          description: OK
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/HTTPError"
-        "422":
-          description: >
-            Deepfire rejected the ignition point as outside its supported
-            simulation areas (continental US, Europe, Hawaii).
+                type: object
+                properties:
+                  status: { type: string }
+                  elmfire: { type: boolean }
+                  dataDir: { type: string }
+                  dataPresent: { type: boolean }
+                  mode: { $ref: "#/components/schemas/PipelineMode" }
+
+  /data-info:
+    get:
+      tags: [fire-spread]
+      summary: Manifest of the static data tier (grid, sources, dates, licenses)
+      operationId: dataInfo
+      responses:
+        "200":
+          description: Contents of data/fire_spread/catalonia/manifest.json
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/HTTPError"
-        "500":
-          description: >
-            Server misconfiguration (missing DEEPFIRE_CLIENT_ID /
-            DEEPFIRE_CLIENT_SECRET) or the resulting grid exceeded the maximum
-            cell count.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HTTPError"
-        "502":
-          description: Deepfire returned an unexpected error.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HTTPError"
-        "503":
-          description: Deepfire rate or concurrency limit reached; retry later.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HTTPError"
-        "504":
-          description: Simulation did not finish within Deepfire's timeout.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HTTPError"
+              schema: { type: object }
+        "404":
+          description: Static data not prepared.
 
 components:
+  responses:
+    ArrivalGridOK:
+      description: Arrival grid computed successfully.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ArrivalGrid"
+    InvalidFireState:
+      description: >
+        Validation error, or the ignition is outside the static-data coverage
+        (Catalonia) or on a non-burnable cell (urban, water, agriculture, barren),
+        or the perimeter touches no burnable cell / does not fit the domain.
+        Reported as 400 by the FireProtector API.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/HTTPError" }
+    ElmfireFailed:
+      description: ELMFIRE failed (see detail / run directory).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/HTTPError" }
+    WeatherFailed:
+      description: Weather provider (Open-Meteo) failure.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/HTTPError" }
+    Unavailable:
+      description: >
+        All simulation slots busy (retry later), or the static tier has not been
+        built yet (scripts/setup_fire_data.sh).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/HTTPError" }
+    ElmfireTimeout:
+      description: ELMFIRE exceeded its time limit.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/HTTPError" }
+
   schemas:
+    PipelineMode:
+      type: string
+      enum: [base, tuned]
+      description: >
+        base = stock ELMFIRE physics (Scott & Burgan 40 table, ADJ 1.0, no diurnal
+        damping, no wind fluctuations, constant live moistures); tuned = the
+        Mediterranean fuel table, ADJ 1.4, overnight factor 0.7, wind fluctuations and
+        monthly live-moisture climatology. Same data in both.
+
+    FireStateRequest:
+      type: object
+      description: At least one of ignition / perimeter.
+      properties:
+        ignition:
+          type: object
+          required: [lat, lon]
+          properties:
+            lat: { type: number, format: double, minimum: -90, maximum: 90 }
+            lon: { type: number, format: double, minimum: -180, maximum: 180 }
+        perimeter:
+          type: object
+          description: GeoJSON Polygon or MultiPolygon geometry (WGS84 lon/lat) of the burning area.
+          required: [type, coordinates]
+          properties:
+            type: { type: string, enum: [Polygon, MultiPolygon] }
+            coordinates: { type: array }
+        durationHours: { type: integer, minimum: 1, maximum: 48, default: 24 }
+        ensembleMembers: { type: integer, minimum: 1, maximum: 64, default: 16 }
+        startTime: { type: string, format: date-time }
+        seed: { type: integer, minimum: 1 }
+        spotting: { type: boolean }
+        mode: { $ref: "#/components/schemas/PipelineMode" }
+        cellSizeM: { type: number, minimum: 30, maximum: 1000, default: 100, description: Cell size of the response grid (m). }
+        debug: { type: boolean, default: false }
+
+    NullableIntGrid:
+      type: array
+      description: Rows south-to-north, each a list of columns west-to-east.
+      items:
+        type: array
+        items:
+          type: [integer, "null"]
+          minimum: 0
+    NullableNumberGrid:
+      type: array
+      description: Rows south-to-north, each a list of columns west-to-east.
+      items:
+        type: array
+        items:
+          type: [number, "null"]
+          minimum: 0
+
+    LegacyArrivalGrid:
+      type: object
+      description: >
+        The default GET response and the contract of the original (Deepfire-backed)
+        route: a regular lat/lon grid anchored at its south-west corner, rows S->N,
+        columns W->E, 100 m cells by default. arrivalHours[row][col] is the hour the
+        ensemble median first reaches the cell (0 = ignition); null = not reached
+        within the horizon or outside data coverage.
+      required: [originLat, originLon, cellDegLat, cellDegLon, arrivalHours]
+      properties:
+        originLat: { type: number }
+        originLon: { type: number }
+        cellDegLat: { type: number }
+        cellDegLon: { type: number }
+        arrivalHours:
+          type: array
+          items:
+            type: array
+            items:
+              type: [integer, "null"]
+              minimum: 0
+
     ArrivalGrid:
       type: object
       description: >
-        A regular lat/lon grid anchored at its south-west corner, with each
-        cell holding the hour it was first reached by the fire (0 = ignition
-        cell, null = not reached within the simulation window).
+        A regular lat/lon grid anchored at its south-west corner. Cell (row, col)
+        covers [originLon + col*cellDegLon, +cellDegLon) x [originLat + row*cellDegLat,
+        +cellDegLat). The ignition point sits at a cell centre. null = no ensemble
+        member reached the cell within the horizon, or the cell is outside data coverage.
+        Returned by POST, and by GET with detail=true.
       required:
         - originLat
         - originLon
         - cellDegLat
         - cellDegLon
+        - cellSizeM
+        - durationMinutes
+        - ensembleMembers
         - arrivalHours
+        - arrivalMinutes
+        - arrivalMinutesP10
+        - arrivalMinutesP90
+        - burnProbability
+        - weather
       properties:
         originLat:
           type: number
@@ -123,42 +339,104 @@ components:
         cellDegLat:
           type: number
           format: double
-          description: Cell height in degrees latitude.
+          description: Cell height in degrees latitude (~cellSizeM).
         cellDegLon:
           type: number
           format: double
           description: Cell width in degrees longitude (varies with ignition latitude).
+        cellSizeM:
+          type: number
+          description: Nominal cell size in metres (the static tier's resolution, 50 or 30).
+        durationMinutes:
+          type: integer
+          description: Simulation horizon in minutes.
+        ensembleMembers:
+          type: integer
+          description: Number of ELMFIRE cases actually aggregated.
         arrivalHours:
-          type: array
+          allOf: [{ $ref: "#/components/schemas/NullableIntGrid" }]
           description: >
-            Rows south-to-north, each a list of columns west-to-east.
-            arrivalHours[row][col] is the first hour that cell was reached,
-            or null if never reached.
+            ceil(arrivalMinutes / 60): first hour (0 = ignition cell, 1..N) the
+            ensemble-median fire reaches the cell. Kept for backward compatibility.
+        arrivalMinutes:
+          allOf: [{ $ref: "#/components/schemas/NullableNumberGrid" }]
+          description: Ensemble median arrival time in minutes (over members that burned the cell).
+        arrivalMinutesP10:
+          allOf: [{ $ref: "#/components/schemas/NullableNumberGrid" }]
+          description: 10th percentile arrival time (earliest plausible).
+        arrivalMinutesP90:
+          allOf: [{ $ref: "#/components/schemas/NullableNumberGrid" }]
+          description: 90th percentile arrival time (latest plausible).
+        burnProbability:
+          type: array
+          description: Fraction of ensemble members in which the cell burned (0-1).
           items:
             type: array
             items:
-              type: integer
-              nullable: true
+              type: [number, "null"]
               minimum: 0
+              maximum: 1
+        weather:
+          $ref: "#/components/schemas/WeatherSummary"
+        physics:
+          type: object
+          description: >
+            Model switches that shaped this run: mode (base|tuned) and modeKnobs (the
+            knob values that mode resolved to), spotting, barriers (OSM fire breaks
+            available), diurnalAdjustment, sunriseUtc/sunsetUtc (h), weatherGrid (points
+            per side), cellSizeM, ignitionOffsetS (seconds into the ignition hour),
+            fuelModelSet, adjFactor, perimeterIgnitions (boundary points lit for a
+            perimeter request; 0 for a point).
+          additionalProperties: true
+        zone:
+          $ref: "#/components/schemas/ZoneInfo"
+        debug:
+          $ref: "#/components/schemas/DebugInfo"
+
+    WeatherSummary:
+      type: object
+      required: [source, windSpeedAvgMs, windDirectionAvg]
+      properties:
+        source: { type: string, description: "e.g. open-meteo:best_match+icon_eu_eps" }
+        windSpeedAvgMs: { type: number, description: Mean 10 m wind speed over the horizon (m/s). }
+        windDirectionAvg: { type: number, description: Circular mean wind direction (deg, from). }
+        windSpeedSigmaMs: { type: [number, "null"], description: Ensemble wind-speed spread used for perturbations. }
+        windDirectionSigmaDeg: { type: [number, "null"] }
+        fuelMoisture1hAvgPct: { type: [number, "null"], description: Horizon mean of the time-lagged 1-h dead fuel moisture at the ignition. }
+        fuelMoisture100hAvgPct: { type: [number, "null"] }
+        liveHerbaceousPct: { type: [number, "null"], description: Live herbaceous moisture used (monthly climatology unless configured). }
+        liveWoodyPct: { type: [number, "null"] }
+        foliarMoisturePct: { type: [number, "null"], description: Canopy foliar moisture (crown-fire initiation). }
+        weatherMembers: { type: [integer, "null"], description: NWP ensemble members driving the cases (1 = perturbed deterministic). }
+
+    ZoneInfo:
+      type: object
+      description: Bombers/Interior ZHR 2014 fire-regime zone containing the ignition (metadata only).
+      properties:
+        name: { type: [string, "null"] }
+        dominantFireType: { type: [string, "null"] }
+        designFires:
+          type: object
+          additionalProperties: { type: number }
+        properties:
+          type: object
+          description: Raw attributes of the zone feature.
+
+    DebugInfo:
+      type: object
+      properties:
+        runId: { type: string }
+        runDir: { type: string }
+        timings:
+          type: object
+          additionalProperties: { type: number }
+        elmfireStdoutTail: { type: string }
 
     HTTPError:
       type: object
-      description: >
-        The FireProtector error envelope, installed application-wide by
-        app/errors.py. `code` is one of bad_request, upstream_error,
-        unavailable, upstream_timeout or internal_error.
-      required:
-        - error
+      required: [detail]
       properties:
-        error:
-          type: object
-          required:
-            - code
-            - message
-          properties:
-            code:
-              type: string
-              description: Machine-readable error class.
-            message:
-              type: string
-              description: Human-readable error message.
+        detail:
+          description: >
+            Human-readable error message (or FastAPI validation detail list). Inside the
+            FireProtector API the same text arrives as error.message.

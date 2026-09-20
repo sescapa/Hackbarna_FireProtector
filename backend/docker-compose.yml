@@ -54,6 +54,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # ELMFIRE shares rasters between MPI ranks via /dev/shm; the 64 MB default
+    # is far too small for a 40 km domain.
+    shm_size: "2gb"
     environment:
       # Inside the compose network the database is reachable as `db`. This
       # overrides anything in .env, which targets localhost for running the
@@ -62,12 +65,25 @@ services:
       ASSET_SPECS_TABLE: protection.asset_specs
       LATITUDE_COLUMN: latitude
       LONGITUDE_COLUMN: longitude
-      # Deepfire credentials for /fire/arrival-grid. The image carries no .env
-      # (.dockerignore drops it), so they have to arrive as environment
-      # variables; Compose fills them from backend/.env. Left unset, that one
-      # route answers 500 and the rest of the API is unaffected.
+      # Deepfire credentials. Not read by this API any more (the fire spread is
+      # the self-hosted ELMFIRE pipeline below); passed through from backend/.env
+      # for other Deepfire users, since the image carries no .env.
       DEEPFIRE_CLIENT_ID: ${DEEPFIRE_CLIENT_ID:-}
       DEEPFIRE_CLIENT_SECRET: ${DEEPFIRE_CLIENT_SECRET:-}
+      # ELMFIRE fire-spread pipeline behind /fire/arrival-grid. The static tier
+      # and run directories live on the data/fire_spread bind mount below;
+      # scripts/setup_fire_data.sh builds the tier. See fire_spread/README.md
+      # for the remaining knobs (all read from the environment / backend/.env).
+      # PIPELINE_MODE picks the model-knob bundle the API serves by default:
+      # base (stock ELMFIRE) or tuned (our Catalan adjustments, fire_spread/modes.py).
+      PIPELINE_MODE: ${PIPELINE_MODE:-tuned}
+      # Optional Open-Meteo commercial key (free tier: 10 000 weighted calls/day per IP).
+      OPEN_METEO_API_KEY: ${OPEN_METEO_API_KEY:-}
+      ELMFIRE_NPROC: ${ELMFIRE_NPROC:-4}
+      DATA_DIR: /srv/data/fire_spread/catalonia
+      RUNS_DIR: /srv/data/fire_spread/runs
+      KEEP_RUNS: ${KEEP_RUNS:-failed}
+      MAX_CONCURRENT_RUNS: ${MAX_CONCURRENT_RUNS:-1}
       # Nebius Token Factory, for the /api briefings. Left unset, the decision
       # layer writes deterministic template briefings rather than calling an
       # LLM, and every other route is unaffected.
@@ -86,14 +102,19 @@ services:
       # editing app/ or fire_spread/ does not need a rebuild.
       - ./app:/srv/app:ro
       - ./fire_spread:/srv/fire_spread:ro
-      # The decision layer's only writable directory: recorded scenario
-      # bundles, the briefing cache and the briefing log. Read-write, and a
-      # bind mount rather than a named volume so a recorded bundle can be
-      # inspected, committed or hand-copied between machines -- which is what
-      # makes the app demonstrable with no Deepfire credentials at all.
+      - ./scripts/fire_spread:/srv/scripts/fire_spread:ro
+      # Read-write: the decision layer's recorded scenario bundles, briefing
+      # cache and log, and under data/fire_spread the ELMFIRE static tier,
+      # source downloads, run directories and hindcast results. A bind mount
+      # rather than a named volume so a recorded bundle can be inspected,
+      # committed or hand-copied between machines. On Linux hosts make
+      # data/fire_spread writable by uid 10001.
       - ./data:/srv/data
+    # Reload only watches the code mounts: ELMFIRE writes run directories under
+    # /srv/data, and watching those would restart the server mid-simulation.
     command:
-      ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+      ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000",
+       "--reload", "--reload-dir", "app", "--reload-dir", "fire_spread"]
 
 volumes:
   pgdata:

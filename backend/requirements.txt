@@ -3,10 +3,13 @@ uvicorn[standard]==0.53.0
 psycopg[binary,pool]==3.3.6
 pydantic-settings==2.15.0
 
-# fire_spread: the Deepfire client and the arrival-grid rasteriser.
-# shapely is pinned to the same version scripts/requirements.txt uses.
+# fire_spread: Open-Meteo client, ELMFIRE input/output rasters, arrival-grid
+# serialisation. shapely is pinned to the same version scripts/requirements.txt uses.
 httpx==0.28.1
 shapely==2.1.2
+lxml==6.1.3
+rasterio==1.5.1
+orjson==3.12.0
 python-dotenv==1.2.3
 
 # Decision layer under /api, ported from the decision-layer repo at the pins it

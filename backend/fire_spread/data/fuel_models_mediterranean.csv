@@ -1,0 +1,20 @@
+# Mediterranean re-parameterisation of the Scott & Burgan codes that the ZAFM-DW fuel map
+# assigns in Catalonia. Same FBFM40 code numbers (no raster remap), metric units:
+#   loads t/ha (oven-dry), SAV 1/cm, depth m, moisture of extinction %, heat kJ/kg.
+# PROVISIONAL: values are literature-range central estimates for Catalan garriga/maquia,
+# Pinus halepensis stands and cereal stubble (Baeza et al. 2002; Mitsopoulos &
+# Dimitrakopoulos 2007; Fernandes 2009; Duce et al. 2012), not hindcast-calibrated.
+# Compared with the US originals: lighter, shallower shrub beds (SH5/SH7 are chaparral),
+# finer shrub foliage (SAV 50-60 /cm), higher dead moisture of extinction (25-30 %) as
+# observed in live-shrub-dominated Mediterranean beds, and a cured-stubble agriculture class.
+# code,name,dynamic,w1h,w10h,w100h,wLH,wLW,sav1h,savLH,savLW,depth_m,mx_pct,heat_kJkg,note
+104,GR4-med,TRUE,0.6,0,0,1.2,0,66,60,0,0.15,15,18600,cereal stubble / dry pasture (ZAFM agriculture; woody crops -> NB3 via agri.tif)
+142,SH2-med,FALSE,2.0,1.5,0.5,0,3.0,60,0,55,0.6,25,18600,low garriga: Rosmarinus/Thymus/Cistus < 0.8 m
+145,SH5-med,FALSE,3.0,2.0,0.5,0,5.0,55,0,50,0.9,25,19000,garriga: Quercus coccifera / Ulex parviflorus ~1 m
+147,SH7-med,FALSE,4.0,4.0,2.0,0,8.0,55,0,50,1.5,25,19000,tall maquia: Arbutus/Erica arborea/Q. ilex scrub 1.5-2.5 m
+148,SH8-med,FALSE,3.5,4.0,1.5,0,7.0,55,0,50,1.2,30,19000,humid tall shrub (Erica/Calluna)
+149,SH9-med,TRUE,4.0,3.0,1.0,1.5,8.0,55,50,50,1.6,30,19000,very tall shrub with herbaceous understory
+161,TU1-med,TRUE,2.0,2.0,2.0,1.0,3.0,60,55,50,0.3,25,18600,open pine/holm-oak woodland with grass-shrub understory
+162,TU2-med,FALSE,3.0,3.0,2.0,0,2.0,60,0,50,0.3,25,18600,moderate pine litter + low shrub
+163,TU3-med,TRUE,3.0,1.5,1.5,1.5,3.5,60,55,50,0.4,25,18600,pine with grass and shrub understory
+165,TU5-med,FALSE,4.0,3.0,2.0,0,5.0,55,0,50,0.45,25,19000,dense Pinus halepensis with shrub understory

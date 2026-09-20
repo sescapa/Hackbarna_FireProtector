@@ -9,6 +9,10 @@ __pycache__/
 db/import/*
 !db/import/.gitkeep
 
+# ELMFIRE static tier, source downloads, run directories, hindcast results
+# (scripts/setup_fire_data.sh; several GB)
+data/fire_spread/
+
 # Decision-layer runtime state under data/.
 #
 # Recorded scenario bundles are NOT ignored: committing one is what makes the

@@ -1,0 +1,11 @@
+{
+  "source": "fixture:west_30mph",
+  "hourly": {
+    "temperature_2m": [32.0],
+    "relative_humidity_2m": [20.0],
+    "wind_speed_10m": [13.41],
+    "wind_direction_10m": [270.0]
+  },
+  "sigma_ws_ms": 1.5,
+  "sigma_wd_deg": 15.0
+}

@@ -76,7 +76,7 @@ _CODES = {
     405: "method_not_allowed",
     409: "conflict",
     422: "bad_request",
-    # 502/504 come from /fire/arrival-grid, which depends on Deepfire. /assets
+    # 502/504 come from /fire/arrival-grid (Open-Meteo upstream, ELMFIRE timeout). /assets
     # never returns them, so naming them does not touch the contract's 400/500.
     502: "upstream_error",
     503: "unavailable",

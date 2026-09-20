@@ -1,0 +1,71 @@
+{
+  "_about": [
+    "Evaluation set for scripts/fire_spread/evaluate.py: Catalan wildfires whose DARP",
+    "perimeter (data/fire_spread/raw/incendis/<year>) grew essentially unchecked for the",
+    "scored horizon, so a free-burning simulation is comparable with the observed extent.",
+    "code = DARP CODI_FINAL. start_utc = ignition time (UTC); hours = the horizon that was",
+    "free-burning (the DARP perimeter is the final one, so a fire contained after 6 h is",
+    "scored on a 6 h run). ignition = [lat, lon] when the origin is known, otherwise the",
+    "upwind-most burnable perimeter vertex is used. Times are from press / Bombers de la",
+    "Generalitat public briefings and are approximate to the hour; edit here, rerun, and",
+    "note the change in docs/elmfire-pipe-assessment.md."
+  ],
+  "fires": [
+    {
+      "code": "2019430119",
+      "name": "La Torre de l'Espanyol (Ribera d'Ebre) 2019",
+      "start_utc": "2019-06-26T12:00:00Z",
+      "hours": 36,
+      "notes": "Started early afternoon 26 June during the June 2019 heat wave; ran free through the night and the 27th (~6 000 ha)."
+    },
+    {
+      "code": "2022250092",
+      "name": "Artesa de Segre / Baldomar (Noguera) 2022",
+      "start_utc": "2022-06-15T13:00:00Z",
+      "hours": 30,
+      "notes": "Started mid-afternoon 15 June 2022 (heat wave); free-burning through the night, ~2 700 ha. Earlier hindcasts: bias 0.92-1.05, the reference free-burning case."
+    },
+    {
+      "code": "2022080173",
+      "name": "El Pont de Vilomara (Bages) 2022",
+      "start_utc": "2022-07-17T11:00:00Z",
+      "hours": 12,
+      "notes": "Ignited around midday 17 July 2022; ~1 600 ha in one afternoon/evening under W-NW wind with spotting, then held. Score the first 12 h."
+    },
+    {
+      "code": "2021430065",
+      "name": "Santa Coloma de Queralt (Conca de Barberà) 2021",
+      "start_utc": "2021-07-24T12:00:00Z",
+      "hours": 24,
+      "notes": "Started early afternoon 24 July 2021, ~1 700 ha; main run the first afternoon and night."
+    },
+    {
+      "code": "2022430063",
+      "name": "Corbera d'Ebre (Terra Alta) 2022",
+      "start_utc": "2022-06-15T12:00:00Z",
+      "hours": 18,
+      "notes": "Same 15 June 2022 episode as Baldomar; ~370 ha DARP perimeter, largely one afternoon-night."
+    },
+    {
+      "code": "2022250084",
+      "name": "Castellar de la Ribera (Solsonès) 2022",
+      "start_utc": "2022-06-15T12:00:00Z",
+      "hours": 18,
+      "notes": "15 June 2022; ~320 ha. Earlier hindcasts: J 0.49-0.53 (tuned), the best-fit case."
+    },
+    {
+      "code": "2023170043",
+      "name": "Portbou (Alt Empordà) 2023",
+      "start_utc": "2023-04-16T10:00:00Z",
+      "hours": 12,
+      "notes": "Tramuntana-driven spring fire, ~480 ha in hours; time approximate (DARP date 16 April 2023)."
+    },
+    {
+      "code": "2024430993",
+      "name": "Batea (Terra Alta) 2024",
+      "start_utc": "2024-05-11T12:00:00Z",
+      "hours": 12,
+      "notes": "11 May 2024, ~430 ha in one afternoon; time approximate."
+    }
+  ]
+}

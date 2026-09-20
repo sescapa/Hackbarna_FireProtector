@@ -31,9 +31,9 @@ holds both halves and the judgement that joins them:
 
 - an _asset register_ — fixed things with a location, an importance and a
   susceptibility to fire — from Postgres (`GET /assets`);
-- a _fire spread forecast_ — `GET /fire/arrival-grid` runs a Deepfire ELMFIRE
-  simulation from an ignition point and returns the hour the fire reaches each
-  100 m cell;
+- a _fire spread forecast_ — `GET /fire/arrival-grid` runs a self-hosted
+  ELMFIRE ensemble from an ignition point and returns the hour the fire reaches
+  each 100 m cell;
 - a _decision layer_ under `/api` — takes an ignition scenario, works out which
   assets the fire reaches and when, ranks them by risk, says how much that
   ranking can be trusted, and writes a briefing about it in three languages.
@@ -59,8 +59,8 @@ touching `backend/app/routers/assets.py` or `backend/app/schemas.py`.
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /assets`                               | Working. Serves 4,269,286 point assets. Points only — forests are not included                                                  |
 | `GET /building_specs`, `POST /add_building` | Working. Internal, not part of the contract                                                                                     |
-| `GET /fire/arrival-grid`                    | Working. Live call to Deepfire; needs `DEEPFIRE_CLIENT_ID`/`DEEPFIRE_CLIENT_SECRET` in `backend/.env`. Not part of the contract |
-| `/api/*` (decision layer)                   | Working. Scenarios, spread contours, scoring, sensitivity, briefings. Serves recorded bundles when Deepfire is unavailable      |
+| `GET /fire/arrival-grid`                    | Working. Self-hosted ELMFIRE (no credentials); needs the static tier from `backend/scripts/setup_fire_data.sh`. Not part of the contract |
+| `/api/*` (decision layer)                   | Working. Scenarios, spread contours, scoring, sensitivity, briefings. Serves recorded bundles when the fire spread is unavailable |
 | `frontend/`                                 | Working. React + MapLibre, talks only to `/api`                                                                                 |
 | `protection.asset_specs`                    | Loaded — the INSPIRE building register for Catalonia                                                                            |
 | `protection.forest_areas`                   | Loaded — the INSPIRE public forests of Catalonia. **Not served by any endpoint**; query it directly                             |
@@ -105,7 +105,7 @@ From a fresh clone, in two terminals:
 ```bash
 # 1. backend — Postgres, the schema, both datasets, then the API on :5102
 cp backend/.env.example backend/.env     # optional; see below
-./backend/scripts/setup_db.sh
+./backend/scripts/setup_db.sh            # or setup_db_container.sh: Docker only, no host Python
 
 # 2. frontend — the UI on :5173, proxying to :5102
 cd frontend && npm install && npm run dev
@@ -113,10 +113,13 @@ cd frontend && npm install && npm run dev
 
 Then open **http://localhost:5173**.
 
-`backend/.env` is optional. Without `DEEPFIRE_CLIENT_ID`/`DEEPFIRE_CLIENT_SECRET`
-the app still runs: it serves the scenario bundles recorded under
-`backend/data/bundles/`, which are committed. With them, it can simulate new
-ignitions. `setup_db.sh` says so on its way past.
+`backend/.env` is optional, and so is the fire-spread static tier: without it
+the app still runs, serving the scenario bundles recorded under
+`backend/data/bundles/`, which are committed. To simulate new ignitions (and
+`GET /fire/arrival-grid`), build the tier once with
+`./backend/scripts/setup_fire_data.sh` (~3 GB of open Catalan data; see
+`backend/README.md`). No credentials are needed: the fire spread is a
+self-hosted ELMFIRE pipeline.
 
 ### The backend, in more detail
 
@@ -154,11 +157,12 @@ host on another port, say.
 | `npm run e2e`   | Playwright smoke test (needs both halves up) |
 | `npm run lint`  | eslint                                       |
 
-The first request for a scenario with no recorded bundle runs a live Deepfire
-simulation, which takes **two to four minutes** — the 24-hour ensemble is not
-quick. After that it is instant, and the result is written to
-`backend/data/bundles/`. Those recordings are committed, so **the UI works with
-no Deepfire credentials at all**; delete one to force a fresh simulation.
+The first request for a scenario with no recorded bundle runs a live ELMFIRE
+ensemble in-process (about a minute; it needs the static tier from
+`backend/scripts/setup_fire_data.sh`). After that it is instant, and the result
+is written to `backend/data/bundles/`. Those recordings are committed, so **the
+UI works without the static tier at all**; delete one to force a fresh
+simulation.
 
 ### Running the tests
 
@@ -186,7 +190,7 @@ backend/
 │   ├── briefing/               # LLM + grounding validator        (ported)
 │   ├── providers/osm_assets.py # named facilities from Overpass
 │   └── data/                   # scenarios.json, asset_types.yaml
-├── fire_spread/                # Deepfire client + arrival-grid rasteriser
+├── fire_spread/                # self-hosted ELMFIRE pipeline (modes, weather, arrival grid)
 ├── db/init/*.sql               # schema; applied on every setup_db.sh run
 ├── data/bundles/*.json         # recorded scenarios — the app runs off these
 ├── extract_buildings.py        # INSPIRE building GML  -> CSV
@@ -200,7 +204,8 @@ frontend/src/
 └── components/                 # ranked list, controls, charts, briefing
 CONTEXT.md                      # the glossary
 DECISIONS.md                    # what was decided and how to change it
-docs/deepfire-api.md            # what the Deepfire API actually does
+docs/deepfire-api.md            # the Deepfire API (replaced by fire_spread/; kept for reference)
+docs/elmfire-pipe-assessment.md # the ELMFIRE pipeline: inputs, tuning, base-vs-tuned evaluation
 archive/docs/SPEC.md            # the original hackathon brief
 ```
 

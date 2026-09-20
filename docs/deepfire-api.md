@@ -1,5 +1,10 @@
 # Deepfire API notes
 
+> Superseded in this backend: `/fire/arrival-grid` and the decision layer now run the self-hosted
+> ELMFIRE pipeline in `backend/fire_spread/` (see `docs/elmfire-pipe-assessment.md`). Kept as
+> reference for other users of the Deepfire API; the arrival-grid contract described at the end
+> is what the new route still serves by default.
+
 Working notes from exploring `docs.deepfire.co` + live testing against the real API.
 Credentials go in `backend/.env` as `DEEPFIRE_CLIENT_ID` / `DEEPFIRE_CLIENT_SECRET`
 (gitignored; see `backend/.env.example`).

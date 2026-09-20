@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from psycopg_pool import AsyncConnectionPool
 
 from fire_spread import router as fire_spread_router
+from fire_spread import startup as fire_spread_startup
 
 from .config import Settings, get_settings
 from .db import create_pool, get_pool
@@ -27,6 +28,9 @@ async def lifespan(app: FastAPI):
     # Does not block startup: connections are established in the background, so
     # the server comes up even while a suspended Neon compute is waking.
     await app.state.pool.open()
+    # The fire-spread service starts in the same process: it logs its mode/readiness and
+    # opens the static tier once; simulations then run per request under /fire.
+    fire_spread_startup()
     try:
         yield
     finally:
@@ -40,7 +44,7 @@ def create_app() -> FastAPI:
         description=(
             "Asset register for the wildfire values-at-risk tool. GET /assets "
             "implements the asset-register contract; the other two routes are "
-            "internal. GET /fire/arrival-grid runs a Deepfire fire-spread "
+            "internal. GET /fire/arrival-grid runs a self-hosted ELMFIRE fire-spread "
             "simulation and returns the hour the fire reaches each grid cell.\n\n"
             "Everything under /api is the decision layer: it takes an ignition "
             "scenario, works out what the fire reaches and ranks it. Those "
@@ -62,7 +66,8 @@ def create_app() -> FastAPI:
     app.include_router(building_specs.router)
     app.include_router(add_building.router)
     # Mounted from the sibling `fire_spread` package rather than app/routers:
-    # it talks to Deepfire, not to Postgres, and stays independently mountable.
+    # it drives ELMFIRE and Open-Meteo, not Postgres, and stays independently
+    # mountable (it reads its own settings from the environment).
     app.include_router(fire_spread_router, prefix="/fire")
     # The decision layer. Prefixed, because the root belongs to the contract.
     app.include_router(decision.router)
